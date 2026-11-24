@@ -15,9 +15,9 @@ class SekolahController extends Controller
         $sekolahs = Sekolah::query()
             ->when($request->q, function ($query, $q) {
                 $query->where(function ($w) use ($q) {
-                    $w->where('nama', 'like', "%{$q}%")
-                        ->orWhere('npsn', 'like', "%{$q}%")
-                        ->orWhere('kecamatan', 'like', "%{$q}%");
+                    $w->whereLike('nama', "%{$q}%")
+                        ->orWhereLike('npsn', "%{$q}%")
+                        ->orWhereLike('kecamatan', "%{$q}%");
                 });
             })
             ->orderBy('nama')
@@ -30,27 +30,33 @@ class SekolahController extends Controller
     {
         return view('admin.sekolah.create');
     }
+
     public function store(Request $request)
     {
         Sekolah::create($request->validate($this->rules()));
         return redirect()->route('dinas.sekolah.index')
             ->with('success', 'Data sekolah berhasil ditambahkan.');
     }
+
     public function edit(Sekolah $sekolah)
     {
         Gate::authorize('update', $sekolah);
         return view('admin.sekolah.edit', compact('sekolah'));
     }
+
     public function update(Request $request, Sekolah $sekolah)
     {
         Gate::authorize('update', $sekolah);
-        $data = $request->validate($this->rules($sekolah->id));
+        $isSekolah = $request->user()->isSekolah();
+        $data = $request->validate($this->rules($sekolah->id, $isSekolah));
+
         // NPSN adalah identitas resmi: tidak boleh diubah oleh sekolah
-        if ($request->user()->isSekolah()) {
+        if ($isSekolah) {
             unset($data['npsn']);
         }
-        // Batasi perubahan koordinat maksimal 500 meter
-        if (isset($data['latitude'], $data['longitude'])) {
+
+    // Batasi perubahan koordinat maksimal 500 meter khusus untuk akun sekolah
+        if ($isSekolah && isset($data['latitude'], $data['longitude'])) {
             $jarak = $this->hitungJarak(
                 (float) $sekolah->latitude,
                 (float) $sekolah->longitude,
@@ -69,12 +75,14 @@ class SekolahController extends Controller
         return $this->kembali($request)
             ->with('success', 'Data sekolah berhasil diperbarui.');
     }
+
     public function destroy(Sekolah $sekolah)
     {
         $sekolah->delete();
         return redirect()->route('dinas.sekolah.index')
             ->with('success', 'Data sekolah berhasil dihapus.');
     }
+
     private function kembali(Request $request)
     {
         return $request->user()->isDinas()
@@ -82,14 +90,9 @@ class SekolahController extends Controller
             : redirect()->route('dashboard');
     }
 
-    private function rules(?int $id = null): array
+    private function rules(?int $id = null, bool $isSekolah = false): array
     {
-        return [
-            'npsn' => [
-                'required',
-                'digits:8',
-                Rule::unique('sekolahs', 'npsn')->ignore($id)
-            ],
+        $rules = [
             'nama' => ['required', 'string', 'max:255'],
             'jenjang' => ['required', Rule::in(['SD', 'SMP', 'SMA', 'SMK'])],
             'status' => ['required', Rule::in(['Negeri', 'Swasta'])],
@@ -99,6 +102,16 @@ class SekolahController extends Controller
             'latitude' => ['required', 'numeric', 'between:-90,90'],
             'longitude' => ['required', 'numeric', 'between:-180,180'],
         ];
+
+        if (! $isSekolah) {
+            $rules['npsn'] = [
+                'required',
+                'digits:8',
+                Rule::unique('sekolahs', 'npsn')->ignore($id),
+            ];
+        }
+
+        return $rules;
     }
 
     public function data(Request $request)
